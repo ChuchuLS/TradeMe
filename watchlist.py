@@ -14,7 +14,14 @@ from datetime import datetime
 st.set_page_config(page_title="Watchlist", page_icon="📋", layout="wide")
 
 # ── Default watchlist ─────────────────────────────────────────────────────────
-DEFAULT_TICKERS = ["NVDA","AAPL","MSFT","GOOGL","META","AMZN","TSLA","SPY","QQQ","GLD"]
+DEFAULT_TICKERS = [
+    "NVDA","AAPL","MSFT",          # US equity
+    "SPY","QQQ","GLD","TLT",       # ETFs
+    "BTC-USD","ETH-USD",           # Crypto
+    "GC=F","CL=F",                 # Commodities futures
+    "EURUSD=X","USDJPY=X",         # FX
+    "^GSPC","^VIX",                # Indices
+]
 
 # ── Indicator calculations ────────────────────────────────────────────────────
 def HHV(s,n): return s.rolling(n,min_periods=1).max()
@@ -320,6 +327,12 @@ if rem_col.button("Remove", use_container_width=True) and remove_ticker != "—"
 
 st.sidebar.markdown("**Current watchlist:**")
 st.sidebar.caption("  |  ".join(st.session_state["tickers"]))
+st.sidebar.caption(
+    "Formats: stocks `AAPL` · crypto `BTC-USD` · "
+    "FX `EURUSD=X` · futures `GC=F` · "
+    "indices `^GSPC` · HK `0700.HK` · "
+    "China `600519.SS`"
+)
 
 st.sidebar.divider()
 sort_by   = st.sidebar.selectbox("Sort by", ["Score","RSI","Stoch","Vol ratio","趋势"])
