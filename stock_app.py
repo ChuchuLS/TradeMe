@@ -81,78 +81,82 @@ def compute_indicator(df: pd.DataFrame) -> pd.DataFrame:
     df["快线"] = (C - llv9) / (hhv9 - llv9).replace(0, np.nan) * 100
 
     # ── Trend regime detection ────────────────────────────────────────────────
-    # Use 3 MAs to classify market regime:
-    #   Uptrend:   MA20 > MA60 > MA120  (only buy signals allowed)
-    #   Downtrend: MA20 < MA60 < MA120  (only sell signals allowed)
-    #   Sideways:  mixed                (both signals allowed, but filtered stricter)
-    ma20  = MA(C, 20)
-    ma60  = MA(C, 60)
-    ma120 = MA(C, 120)
+    ma20  = MA(C, 20);  ma60  = MA(C, 60)
+    ma120 = MA(C, 120); ma200 = MA(C, 200)
     uptrend   = (ma20 > ma60) & (ma60 > ma120)
     downtrend = (ma20 < ma60) & (ma60 < ma120)
-    sideways  = ~uptrend & ~downtrend
 
-    # Price vs MA200 — long-term bull/bear context
-    ma200     = MA(C, 200)
-    bull_mkt  = C > ma200
-    bear_mkt  = C < ma200
-
-    # ADX-like trend strength: range expansion over 14 days
-    tr        = (H - L).rolling(14).mean()
-    atr_ratio = tr / C   # high ratio = volatile/trending, low = quiet/ranging
-    strong_trend = atr_ratio > atr_ratio.rolling(60).median()
+    # Trend strength: how steeply is MA60 rising? (slope over 20 days)
+    ma60_slope = (ma60 - REF(ma60, 20)) / REF(ma60, 20) * 100
+    strong_up  = uptrend & (ma60_slope > 3)    # MA60 rose >3% in 20 days
+    weak_up    = uptrend & (ma60_slope <= 3)
 
     df["趋势"] = "sideways"
     df.loc[uptrend,   "趋势"] = "uptrend"
+    df.loc[strong_up, "趋势"] = "strong uptrend"
     df.loc[downtrend, "趋势"] = "downtrend"
 
-    # ── Buy signal: only in uptrend or sideways, not in strong downtrend ──────
-    buy_raw = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 25)
-    # In uptrend, require a deeper pullback (走势 < 20 instead of 25)
-    buy_strict = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 20)
-    buy_filtered = IF(
-        uptrend, buy_strict,     # uptrend: stricter threshold
-        IF(downtrend, buy_raw & bear_mkt.shift(1).fillna(False),  # downtrend: only if bear context too
-           buy_raw)              # sideways: original logic
-    ).astype(bool)
-    df["买入信号"] = FILTER(buy_filtered, 5)
-    df["关注低买"] = (pd.Series(90, index=df.index) > df["散户"]) & CROSS(pd.Series(90, index=df.index), df["散户"])
+    # ── Normalised oscillator readings (rolling percentile rank) ─────────────
+    # Instead of absolute thresholds, measure where each oscillator sits
+    # relative to its own 120-day history. This adapts to trending markets.
+    def pct_rank(s, n=120):
+        return s.rolling(n, min_periods=20).apply(
+            lambda x: pd.Series(x).rank(pct=True).iloc[-1] * 100, raw=False)
 
-    # ── Sell signal: suppress in strong uptrend unless ALL conditions very tight
-    top_cond = (
-        (df["散户"] < 15) &
-        (df["主力"] > 85) &
-        (df["走势"] > 80) &
-        (df["CDMA"] <= REF(df["CDMA"], 1)) &
-        (df["CDMA"] <= REF(df["CDMA"], 2)) &
-        (df["主力"] < REF(df["主力"], 1))
-    )
-    # In strong uptrend, require even tighter conditions
-    top_strict = (
-        (df["散户"] < 8) &       # retail very complacent
-        (df["主力"] > 88) &      # smart money very elevated
-        (df["走势"] > 85) &      # trend very strong (topping from peak)
-        (df["CDMA"] <= REF(df["CDMA"], 1)) &
-        (df["CDMA"] <= REF(df["CDMA"], 2)) &
-        (df["CDMA"] <= REF(df["CDMA"], 3)) &   # 3 days falling in uptrend
-        (df["主力"] < REF(df["主力"], 1)) &
-        (df["主力"] < REF(df["主力"], 2))        # smart money falling 2 days
-    )
-    sell_filtered = IF(
-        uptrend,   top_strict,   # uptrend: very strict
-        IF(downtrend, top_cond,  # downtrend: normal conditions fine
-           top_cond)             # sideways: normal conditions
-    ).astype(bool)
-    df["卖出信号"] = FILTER(sell_filtered, 15)  # longer suppression window
+    sanhu_rank = pct_rank(df["散户"])   # low rank = near recent lows (retail panicked)
+    zhuli_rank = pct_rank(df["主力"])   # high rank = near recent highs (smart money elevated)
+    zoushi_rank= pct_rank(df["走势"])   # high rank = trend near recent peak
+    cdma_rank  = pct_rank(df["CDMA"])  # falling rank = momentum decelerating
 
-    # 观注顶: strictest alert, regime-independent
+    # ── Buy signal ────────────────────────────────────────────────────────────
+    # Core: 走势 near its own recent lows + J turning up
+    buy_base = (
+        (J > REF(J, 1)) &
+        (df["走势"] >= REF(df["走势"], 1)) &
+        (zoushi_rank < 20)   # 走势 in bottom 20% of its own range
+    )
+    df["买入信号"] = FILTER(buy_base, 5)
+    df["关注低买"] = (
+        (pd.Series(90, index=df.index) > df["散户"]) &
+        CROSS(pd.Series(90, index=df.index), df["散户"])
+    )
+
+    # ── Sell signal — rank-based, regime-aware ────────────────────────────────
+    # Core sell: ALL oscillators simultaneously at extremes within their own history
+    sell_base = (
+        (sanhu_rank < 15) &          # 散户 near its recent lows (retail fully in)
+        (zhuli_rank > 85) &          # 主力 near its recent highs (smart money peak)
+        (zoushi_rank > 80) &         # 走势 near its recent highs (trend peak)
+        (df["CDMA"] < REF(df["CDMA"], 1)) &   # CDMA turning down
+        (df["CDMA"] < REF(df["CDMA"], 2)) &
+        (df["主力"]  < REF(df["主力"],  1)) &   # 主力 turning down
+        (df["主力"]  < REF(df["主力"],  2))
+    )
+
+    # In strong uptrend: additionally require a failed new high attempt
+    # (price made a new 20-day high recently but now falling = exhaustion)
+    recent_high   = HHV(H, 20)
+    near_high     = C >= recent_high * 0.97       # within 3% of 20-day high
+    price_falling = C < REF(C, 3)                 # but now 3 days lower
+    exhaustion    = near_high & price_falling
+
+    sell_in_uptrend = sell_base & exhaustion
+    sell_other      = sell_base
+
+    sell_filtered = IF(strong_up, sell_in_uptrend,
+                    IF(weak_up,   sell_base,
+                                  sell_other)).astype(bool)
+
+    df["卖出信号"] = FILTER(sell_filtered, 20)   # 20-bar suppression
+
+    # 观注顶: rank-based version — all 4 oscillators simultaneously at extremes
     df["观注顶"] = (
-        (df["散户"] < 8) &
-        (df["主力"] > 90) &
-        (df["走势"] > 90) &
-        (df["CDMA"] <= REF(df["CDMA"], 1)) &
-        (~uptrend | (df["主力"] < REF(df["主力"], 3)))  # in uptrend only if 主力 clearly falling
-    )
+        (sanhu_rank  < 8)  &
+        (zhuli_rank  > 92) &
+        (zoushi_rank > 88) &
+        (cdma_rank   < REF(cdma_rank, 1)) &
+        (df["主力"] < REF(df["主力"], 3))
+    ).fillna(False)
 
     return df
 
