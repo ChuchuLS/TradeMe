@@ -80,34 +80,78 @@ def compute_indicator(df: pd.DataFrame) -> pd.DataFrame:
     hhv9, llv9 = HHV(H, 9), LLV(L, 9)
     df["快线"] = (C - llv9) / (hhv9 - llv9).replace(0, np.nan) * 100
 
-    buy_raw  = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 25)
-    df["买入信号"] = FILTER(buy_raw, 5)
+    # ── Trend regime detection ────────────────────────────────────────────────
+    # Use 3 MAs to classify market regime:
+    #   Uptrend:   MA20 > MA60 > MA120  (only buy signals allowed)
+    #   Downtrend: MA20 < MA60 < MA120  (only sell signals allowed)
+    #   Sideways:  mixed                (both signals allowed, but filtered stricter)
+    ma20  = MA(C, 20)
+    ma60  = MA(C, 60)
+    ma120 = MA(C, 120)
+    uptrend   = (ma20 > ma60) & (ma60 > ma120)
+    downtrend = (ma20 < ma60) & (ma60 < ma120)
+    sideways  = ~uptrend & ~downtrend
+
+    # Price vs MA200 — long-term bull/bear context
+    ma200     = MA(C, 200)
+    bull_mkt  = C > ma200
+    bear_mkt  = C < ma200
+
+    # ADX-like trend strength: range expansion over 14 days
+    tr        = (H - L).rolling(14).mean()
+    atr_ratio = tr / C   # high ratio = volatile/trending, low = quiet/ranging
+    strong_trend = atr_ratio > atr_ratio.rolling(60).median()
+
+    df["趋势"] = "sideways"
+    df.loc[uptrend,   "趋势"] = "uptrend"
+    df.loc[downtrend, "趋势"] = "downtrend"
+
+    # ── Buy signal: only in uptrend or sideways, not in strong downtrend ──────
+    buy_raw = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 25)
+    # In uptrend, require a deeper pullback (走势 < 20 instead of 25)
+    buy_strict = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 20)
+    buy_filtered = IF(
+        uptrend, buy_strict,     # uptrend: stricter threshold
+        IF(downtrend, buy_raw & bear_mkt.shift(1).fillna(False),  # downtrend: only if bear context too
+           buy_raw)              # sideways: original logic
+    ).astype(bool)
+    df["买入信号"] = FILTER(buy_filtered, 5)
     df["关注低买"] = (pd.Series(90, index=df.index) > df["散户"]) & CROSS(pd.Series(90, index=df.index), df["散户"])
 
-    # ── Improved sell signal using 观注顶 logic ────────────────────────────────
-    # Original sell (J>85 + 走势 falling) fired too often during uptrends.
-    # New approach: require ALL four conditions simultaneously:
-    #   1. 散户 < 15  — retail still holding (not yet panicked = distribution phase)
-    #   2. 主力 > 85  — smart money was elevated (had something to distribute)
-    #   3. 走势 > 80  — trend was strong (topping from strength, not weakness)
-    #   4. CDMA turning down — momentum rolling over (the key timing trigger)
-    # Additionally confirm 主力 is now FALLING (smart money exiting)
+    # ── Sell signal: suppress in strong uptrend unless ALL conditions very tight
     top_cond = (
         (df["散户"] < 15) &
         (df["主力"] > 85) &
         (df["走势"] > 80) &
         (df["CDMA"] <= REF(df["CDMA"], 1)) &
-        (df["CDMA"] <= REF(df["CDMA"], 2)) &   # CDMA falling 2 consecutive days
-        (df["主力"] < REF(df["主力"], 1))        # smart money starting to exit
+        (df["CDMA"] <= REF(df["CDMA"], 2)) &
+        (df["主力"] < REF(df["主力"], 1))
     )
-    df["卖出信号"] = FILTER(top_cond, 10)  # suppress re-trigger for 10 bars
+    # In strong uptrend, require even tighter conditions
+    top_strict = (
+        (df["散户"] < 8) &       # retail very complacent
+        (df["主力"] > 88) &      # smart money very elevated
+        (df["走势"] > 85) &      # trend very strong (topping from peak)
+        (df["CDMA"] <= REF(df["CDMA"], 1)) &
+        (df["CDMA"] <= REF(df["CDMA"], 2)) &
+        (df["CDMA"] <= REF(df["CDMA"], 3)) &   # 3 days falling in uptrend
+        (df["主力"] < REF(df["主力"], 1)) &
+        (df["主力"] < REF(df["主力"], 2))        # smart money falling 2 days
+    )
+    sell_filtered = IF(
+        uptrend,   top_strict,   # uptrend: very strict
+        IF(downtrend, top_cond,  # downtrend: normal conditions fine
+           top_cond)             # sideways: normal conditions
+    ).astype(bool)
+    df["卖出信号"] = FILTER(sell_filtered, 15)  # longer suppression window
 
-    # 观注顶: original top warning kept as a separate alert (stricter)
+    # 观注顶: strictest alert, regime-independent
     df["观注顶"] = (
         (df["散户"] < 8) &
         (df["主力"] > 90) &
         (df["走势"] > 90) &
-        (df["CDMA"] <= REF(df["CDMA"], 1))
+        (df["CDMA"] <= REF(df["CDMA"], 1)) &
+        (~uptrend | (df["主力"] < REF(df["主力"], 3)))  # in uptrend only if 主力 clearly falling
     )
 
     return df
@@ -289,6 +333,12 @@ if result is not None:
     # Metrics
     latest = result.iloc[-1]
     prev   = result.iloc[-2]
+    # Trend regime badge
+    regime = latest.get("趋势", "sideways")
+    regime_color = {"uptrend":"🟢","downtrend":"🔴","sideways":"🟡"}.get(regime,"🟡")
+    st.markdown(f"**Market regime:** {regime_color} `{regime.upper()}`  — "
+                f"signals are filtered based on trend direction")
+
     cols   = st.columns(6)
     cols[0].metric("Price",        f"${latest['CLOSE']:.2f}",
                    f"{latest['CLOSE']-prev['CLOSE']:+.2f}")
