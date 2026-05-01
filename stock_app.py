@@ -296,14 +296,22 @@ st.sidebar.title("Settings")
 ticker  = st.sidebar.text_input(
     "Ticker symbol",
     value="NVDA",
-    placeholder="AAPL / TSLA / 0700.HK / 600519.SS",
-    help="US: AAPL  |  HK: 0700.HK  |  A-share: 600519.SS  |  ETF: SPY",
+    placeholder="AAPL · BTC-USD · GC=F · EURUSD=X · ^GSPC",
+    help=(
+        "Stocks: AAPL, MSFT  |  ETFs: SPY, QQQ, GLD  |  "
+        "Crypto: BTC-USD, ETH-USD  |  Futures: GC=F, CL=F, NG=F  |  "
+        "FX: EURUSD=X, USDJPY=X  |  Indices: ^GSPC, ^VIX  |  "
+        "HK: 0700.HK  |  China: 600519.SS, 000858.SZ"
+    ),
 ).strip().upper()
 period   = st.sidebar.selectbox("History", ["1Y", "2Y", "5Y", "Max"], index=1)
 st.sidebar.divider()
 st.sidebar.caption(
     "Data via Yahoo Finance (free, 15-min delay).\n\n"
-    "Indicator translated from iFind/TongHuaShun formula system."
+    "Ticker formats:\n"
+    "Stocks: AAPL · ETFs: SPY · Crypto: BTC-USD\n"
+    "Futures: GC=F · FX: EURUSD=X · Indices: ^GSPC\n"
+    "HK: 0700.HK · China: 600519.SS"
 )
 run = st.sidebar.button("Run indicator", type="primary", use_container_width=True)
 
