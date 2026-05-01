@@ -412,7 +412,7 @@ def style_table(df):
             else:        return "background-color:#2e1010;color:#f87171;font-weight:500"
         except: return ""
 
-    styled = styled.applymap(score_cell, subset=["Score"])
+    styled = styled.map(score_cell, subset=["Score"])
 
     # RSI coloring
     def rsi_cell(val):
@@ -422,7 +422,7 @@ def style_table(df):
             if v > 70: return "color:#f87171"
             return ""
         except: return ""
-    styled = styled.applymap(rsi_cell, subset=["RSI"])
+    styled = styled.map(rsi_cell, subset=["RSI"])
 
     # Stoch coloring
     def stoch_cell(val):
@@ -432,7 +432,7 @@ def style_table(df):
             if v > 80: return "color:#f87171"
             return ""
         except: return ""
-    styled = styled.applymap(stoch_cell, subset=["Stoch K"])
+    styled = styled.map(stoch_cell, subset=["Stoch K"])
 
     # Chg% coloring
     def chg_cell(val):
@@ -442,7 +442,7 @@ def style_table(df):
             if v < 0: return "color:#f87171"
             return ""
         except: return ""
-    styled = styled.applymap(chg_cell, subset=["Chg %"])
+    styled = styled.map(chg_cell, subset=["Chg %"])
 
     # iFind alert highlight
     def ifind_cell(val):
@@ -451,7 +451,7 @@ def style_table(df):
         if "关注" in str(val): return "color:#60a5fa"
         if "顶" in str(val):   return "color:#c084fc;font-weight:500"
         return "color:#555"
-    styled = styled.applymap(ifind_cell, subset=["iFind alert"])
+    styled = styled.map(ifind_cell, subset=["iFind alert"])
 
     return styled.hide(axis="index")
 
