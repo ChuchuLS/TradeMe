@@ -81,11 +81,34 @@ def compute_indicator(df: pd.DataFrame) -> pd.DataFrame:
     df["快线"] = (C - llv9) / (hhv9 - llv9).replace(0, np.nan) * 100
 
     buy_raw  = (J > REF(J, 1)) & (df["走势"] >= REF(df["走势"], 1)) & (df["走势"] < 25)
-    sell_raw = (J < REF(J, 1)) & (df["走势"] <= REF(df["走势"], 1)) & (J > 85)
     df["买入信号"] = FILTER(buy_raw, 5)
-    df["卖出信号"] = FILTER(sell_raw, 5)
     df["关注低买"] = (pd.Series(90, index=df.index) > df["散户"]) & CROSS(pd.Series(90, index=df.index), df["散户"])
-    df["观注顶"]  = (df["散户"] < 8) & (df["主力"] > 90) & (df["走势"] > 90) & (df["CDMA"] <= REF(df["CDMA"], 1))
+
+    # ── Improved sell signal using 观注顶 logic ────────────────────────────────
+    # Original sell (J>85 + 走势 falling) fired too often during uptrends.
+    # New approach: require ALL four conditions simultaneously:
+    #   1. 散户 < 15  — retail still holding (not yet panicked = distribution phase)
+    #   2. 主力 > 85  — smart money was elevated (had something to distribute)
+    #   3. 走势 > 80  — trend was strong (topping from strength, not weakness)
+    #   4. CDMA turning down — momentum rolling over (the key timing trigger)
+    # Additionally confirm 主力 is now FALLING (smart money exiting)
+    top_cond = (
+        (df["散户"] < 15) &
+        (df["主力"] > 85) &
+        (df["走势"] > 80) &
+        (df["CDMA"] <= REF(df["CDMA"], 1)) &
+        (df["CDMA"] <= REF(df["CDMA"], 2)) &   # CDMA falling 2 consecutive days
+        (df["主力"] < REF(df["主力"], 1))        # smart money starting to exit
+    )
+    df["卖出信号"] = FILTER(top_cond, 10)  # suppress re-trigger for 10 bars
+
+    # 观注顶: original top warning kept as a separate alert (stricter)
+    df["观注顶"] = (
+        (df["散户"] < 8) &
+        (df["主力"] > 90) &
+        (df["走势"] > 90) &
+        (df["CDMA"] <= REF(df["CDMA"], 1))
+    )
 
     return df
 
@@ -154,7 +177,7 @@ def build_chart(result: pd.DataFrame, ticker: str, name: str) -> go.Figure:
     # Signal markers
     for y_data, color, symbol, lbl, sz in [
         (buy_y,  "#4ade80", "triangle-up",   "buy signal",   12),
-        (sell_y, "#f87171", "triangle-down",  "sell signal",  12),
+        (sell_y, "#f87171", "triangle-down",  "sell (distribution top)",  12),
         (low_y,  "#60a5fa", "star",           "watch low buy", 10),
         (top_y,  "#c084fc", "diamond",        "watch top",     10),
     ]:
@@ -285,7 +308,8 @@ if result is not None:
     if last30["买入信号"].sum():
         st.success(f"Buy signal triggered {int(last30['买入信号'].sum())}x in the last 30 days")
     if last30["卖出信号"].sum():
-        st.warning(f"Sell signal triggered {int(last30['卖出信号'].sum())}x in the last 30 days")
+        st.warning(f"Sell signal triggered {int(last30['卖出信号'].sum())}x in the last 30 days  "
+                   f"(散户<15, 主力>85, 走势>80, CDMA rolling over)")
     if last30["观注顶"].sum():
         st.error("Watch-top alert active in the last 30 days — exercise caution")
 
