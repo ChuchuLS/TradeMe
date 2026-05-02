@@ -217,8 +217,14 @@ def build_frame(rrg_data, all_plot, tail_w, week_offset=0):
 
         tail_x = xs.iloc[start_idx:end_idx].tolist()
         tail_y = ys.iloc[start_idx:end_idx].tolist()
-        if not tail_x:
+        if len(tail_x) < 1:
             continue
+        # Remove any NaN values
+        valid = [(x,y) for x,y in zip(tail_x,tail_y) if not (np.isnan(x) or np.isnan(y))]
+        if not valid:
+            continue
+        tail_x, tail_y = zip(*valid)
+        tail_x, tail_y = list(tail_x), list(tail_y)
 
         curr_x, curr_y = tail_x[-1], tail_y[-1]
         quad, color = quadrant(curr_x, curr_y)
