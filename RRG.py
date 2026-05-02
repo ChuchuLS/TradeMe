@@ -175,108 +175,199 @@ if not rrg_data:
     st.error("Not enough data to compute RRG.")
     st.stop()
 
-# ── Build chart ───────────────────────────────────────────────────────────────
-fig = go.Figure()
+# ── Animate toggle ────────────────────────────────────────────────────────────
+animate = st.toggle("▶ Animate rotation", value=False,
+                    help="Step through each week to see how ETFs rotated over time")
 
-# Quadrant backgrounds
-for (x0,x1,y0,y1,color,label) in [
-    (100,130, 100,130, "rgba(230,126, 34,0.08)", "LEADING"),
-    (100,130,  70,100, "rgba( 46,134,193,0.08)", "WEAKENING"),
-    ( 70,100,  70,100, "rgba( 29, 78,137,0.08)", "LAGGING"),
-    ( 70,100, 100,130, "rgba(133,193,233,0.08)", "IMPROVING"),
-]:
-    fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
-                  fillcolor=color, line_width=0, layer="below")
-    fig.add_annotation(x=(x0+x1)/2, y=(y0+y1)/2, text=f"<b>{label}</b>",
-                       showarrow=False,
-                       font=dict(size=13, color=color.replace("0.08","0.5")),
-                       xref="x", yref="y")
+# For animation we need enough history: tail + animation steps
+anim_weeks = st.slider("Animation history (weeks)", 4, 26, 12) if animate else tail_weeks
 
-# Centre lines
-fig.add_hline(y=100, line_dash="dash", line_color="rgba(150,150,150,0.4)", line_width=1)
-fig.add_vline(x=100, line_dash="dash", line_color="rgba(150,150,150,0.4)", line_width=1)
+def build_frame(rrg_data, all_plot, tail_w, week_offset=0):
+    """Build traces for a single animation frame. week_offset=0 is most recent."""
+    traces = []
+    shapes = []
+    annotations = []
 
-# Plot each ETF
-for ticker, rd in rrg_data.items():
-    label = all_plot.get(ticker, ticker)
-    xs    = rd["rs_ratio"].dropna()
-    ys    = rd["rs_mom"].dropna()
-    if len(xs) < tail_weeks + 1:
-        continue
-
-    # Tail: last `tail_weeks` weekly points
-    tail_x = xs.iloc[-(tail_weeks+1):].tolist()
-    tail_y = ys.iloc[-(tail_weeks+1):].tolist()
-    curr_x, curr_y = tail_x[-1], tail_y[-1]
-
-    quad, color = quadrant(curr_x, curr_y)
-
-    # Tail line (fading opacity)
-    for i in range(len(tail_x)-1):
-        alpha = 0.2 + 0.6 * (i / max(len(tail_x)-2, 1))
-        fig.add_trace(go.Scatter(
-            x=[tail_x[i], tail_x[i+1]],
-            y=[tail_y[i], tail_y[i+1]],
-            mode="lines",
-            line=dict(color=color, width=1.5),
-            opacity=alpha,
-            showlegend=False,
-            hoverinfo="skip",
+    # Quadrant backgrounds
+    for (x0,x1,y0,y1,color,label) in [
+        (100,130, 100,130, "rgba(230,126, 34,0.08)", "LEADING"),
+        (100,130,  70,100, "rgba( 46,134,193,0.08)", "WEAKENING"),
+        ( 70,100,  70,100, "rgba( 29, 78,137,0.08)", "LAGGING"),
+        ( 70,100, 100,130, "rgba(133,193,233,0.08)", "IMPROVING"),
+    ]:
+        shapes.append(dict(type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+                           fillcolor=color, line_width=0, layer="below"))
+        annotations.append(dict(
+            x=(x0+x1)/2, y=(y0+y1)/2, text=f"<b>{label}</b>",
+            showarrow=False,
+            font=dict(size=13, color=color.replace("0.08","0.5")),
+            xref="x", yref="y"
         ))
 
-    # Current dot
-    fig.add_trace(go.Scatter(
-        x=[curr_x], y=[curr_y],
-        mode="markers+text",
-        marker=dict(size=10, color=color,
-                    line=dict(width=1.5, color="#fff")),
-        text=[ticker],
-        textposition="top center",
-        textfont=dict(size=10, color=color),
-        name=f"{ticker} — {label}",
-        hovertemplate=(
-            f"<b>{ticker}</b> ({label})<br>"
-            f"Quadrant: {quad}<br>"
-            f"RS-Ratio: %{{x:.1f}}<br>"
-            f"RS-Momentum: %{{y:.1f}}<extra></extra>"
-        ),
-        showlegend=True,
-    ))
+    for ticker, rd in rrg_data.items():
+        label = all_plot.get(ticker, ticker)
+        xs = rd["rs_ratio"].dropna()
+        ys = rd["rs_mom"].dropna()
 
-# Quadrant legend
-for label, color in [("Leading","#e67e22"),("Weakening","#2e86c1"),
-                      ("Lagging","#1d4e89"),("Improving","#85c1e9")]:
-    fig.add_trace(go.Scatter(
-        x=[None], y=[None], mode="markers",
-        marker=dict(size=10, color=color, symbol="square"),
-        name=label, showlegend=True,
-    ))
+        # Shift by offset for animation
+        end_idx   = len(xs) - week_offset
+        start_idx = max(0, end_idx - tail_w - 1)
+        if end_idx < 2:
+            continue
 
-fig.update_layout(
+        tail_x = xs.iloc[start_idx:end_idx].tolist()
+        tail_y = ys.iloc[start_idx:end_idx].tolist()
+        if not tail_x:
+            continue
+
+        curr_x, curr_y = tail_x[-1], tail_y[-1]
+        quad, color = quadrant(curr_x, curr_y)
+
+        # Tail line
+        for i in range(len(tail_x)-1):
+            alpha = 0.15 + 0.65 * (i / max(len(tail_x)-2, 1))
+            traces.append(go.Scatter(
+                x=[tail_x[i], tail_x[i+1]],
+                y=[tail_y[i], tail_y[i+1]],
+                mode="lines",
+                line=dict(color=color, width=1.5),
+                opacity=alpha,
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+        # Dot
+        traces.append(go.Scatter(
+            x=[curr_x], y=[curr_y],
+            mode="markers+text",
+            marker=dict(size=10, color=color, line=dict(width=1.5, color="#fff")),
+            text=[ticker],
+            textposition="top center",
+            textfont=dict(size=10, color=color),
+            name=f"{ticker} — {label}",
+            hovertemplate=(
+                f"<b>{ticker}</b> ({label})<br>"
+                f"Quadrant: {quad}<br>"
+                f"RS-Ratio: {curr_x:.1f}<br>"
+                f"RS-Momentum: {curr_y:.1f}<extra></extra>"
+            ),
+            showlegend=True,
+        ))
+
+    # Legend markers
+    for lname, lcolor in [("Leading","#e67e22"),("Weakening","#2e86c1"),
+                           ("Lagging","#1d4e89"),("Improving","#85c1e9")]:
+        traces.append(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=10, color=lcolor, symbol="square"),
+            name=lname, showlegend=True,
+        ))
+
+    return traces, shapes, annotations
+
+base_layout = dict(
     height=700,
     plot_bgcolor="rgba(0,0,0,0)",
     paper_bgcolor="rgba(0,0,0,0)",
-    xaxis=dict(
-        title="RS-Ratio  →  (Relative Strength vs benchmark)",
-        range=[70, 130], showgrid=True,
-        gridcolor="rgba(128,128,128,0.1)",
-        tickfont=dict(size=10),
-    ),
-    yaxis=dict(
-        title="RS-Momentum  →  (Trend of Relative Strength)",
-        range=[70, 130], showgrid=True,
-        gridcolor="rgba(128,128,128,0.1)",
-        tickfont=dict(size=10),
-    ),
-    legend=dict(
-        orientation="v", x=1.01, y=1,
-        font=dict(size=10), bgcolor="rgba(0,0,0,0)",
-    ),
+    xaxis=dict(title="RS-Ratio → (Relative Strength vs benchmark)",
+               range=[70,130], showgrid=True,
+               gridcolor="rgba(128,128,128,0.1)", tickfont=dict(size=10)),
+    yaxis=dict(title="RS-Momentum → (Trend of Relative Strength)",
+               range=[70,130], showgrid=True,
+               gridcolor="rgba(128,128,128,0.1)", tickfont=dict(size=10)),
+    legend=dict(orientation="v", x=1.01, y=1,
+                font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
     hovermode="closest",
-    margin=dict(l=60, r=180, t=40, b=60),
+    margin=dict(l=60, r=180, t=60, b=60),
 )
 
-st.plotly_chart(fig, use_container_width=True)
+if not animate:
+    # ── Static chart ──────────────────────────────────────────────────────────
+    traces, shapes, annotations = build_frame(rrg_data, all_plot, tail_weeks, 0)
+    fig = go.Figure(data=traces)
+    fig.update_layout(**base_layout, shapes=shapes, annotations=annotations)
+    st.plotly_chart(fig, use_container_width=True)
+
+else:
+    # ── Animated chart ────────────────────────────────────────────────────────
+    # Find max available weeks across all tickers
+    max_offset = min(
+        max(len(rd["rs_ratio"].dropna()) - tail_weeks - 2
+            for rd in rrg_data.values() if len(rd["rs_ratio"].dropna()) > tail_weeks + 2),
+        anim_weeks
+    )
+    max_offset = max(1, max_offset)
+
+    # Build all frames (from oldest to newest)
+    all_frames = []
+    frame_labels = []
+    for offset in range(max_offset, -1, -1):
+        traces, shapes, annotations = build_frame(rrg_data, all_plot, tail_weeks, offset)
+        # Get date for this frame
+        sample_rd = next(iter(rrg_data.values()))
+        idx = sample_rd["rs_ratio"].dropna().index
+        frame_date = str(idx[-(offset+1)].date()) if offset < len(idx) else f"Week -{offset}"
+        all_frames.append(go.Frame(
+            data=traces,
+            name=frame_date,
+            layout=go.Layout(
+                shapes=shapes,
+                annotations=annotations + [dict(
+                    x=0.5, y=1.04, xref="paper", yref="paper",
+                    text=f"<b>{frame_date}</b>",
+                    showarrow=False, font=dict(size=14),
+                )]
+            )
+        ))
+        frame_labels.append(frame_date)
+
+    # Initial frame (oldest)
+    init_traces, init_shapes, init_ann = build_frame(rrg_data, all_plot, tail_weeks, max_offset)
+    fig = go.Figure(
+        data=init_traces,
+        frames=all_frames,
+        layout=go.Layout(
+            **base_layout,
+            shapes=init_shapes,
+            annotations=init_ann,
+            updatemenus=[dict(
+                type="buttons",
+                showactive=False,
+                y=1.12, x=0.5, xanchor="center",
+                buttons=[
+                    dict(label="▶  Play",
+                         method="animate",
+                         args=[None, dict(
+                             frame=dict(duration=600, redraw=True),
+                             fromcurrent=True,
+                             transition=dict(duration=300, easing="cubic-in-out"),
+                         )]),
+                    dict(label="⏸  Pause",
+                         method="animate",
+                         args=[[None], dict(
+                             frame=dict(duration=0, redraw=False),
+                             mode="immediate",
+                             transition=dict(duration=0),
+                         )]),
+                ],
+            )],
+            sliders=[dict(
+                active=0,
+                currentvalue=dict(prefix="Week: ", font=dict(size=11)),
+                pad=dict(t=50, b=10),
+                steps=[dict(
+                    method="animate",
+                    args=[[f.name], dict(
+                        frame=dict(duration=600, redraw=True),
+                        mode="immediate",
+                        transition=dict(duration=300),
+                    )],
+                    label=f.name,
+                ) for f in all_frames],
+            )],
+        )
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 # ── Quadrant summary table ────────────────────────────────────────────────────
 st.divider()
