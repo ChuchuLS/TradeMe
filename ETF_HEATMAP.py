@@ -344,7 +344,12 @@ with tab1:
         sel_groups, grp_vals,
         title=f"Global ETF Price Change — {period}",
         fmt=lambda v: f"{v:+.1f}%" if v is not None else "N/A",
-        colorscale="RdYlGn",
+        colorscale=[
+            [0.0, "#1d4e89"], [0.2, "#2e86c1"],
+            [0.4, "#85c1e9"], [0.5, "#f5f5f5"],
+            [0.6, "#f0b27a"], [0.8, "#e67e22"],
+            [1.0, "#873600"],
+        ],
         zmid=0,
     )
     st.plotly_chart(fig1, use_container_width=True)
@@ -369,10 +374,10 @@ with tab2:
         title="Global ETF Technical Score (-5 to +5)",
         fmt=lambda v: f"{v:+d}" if v is not None else "N/A",
         colorscale=[
-            [0.0,  "#7f1d1d"], [0.2, "#dc2626"],
-            [0.4,  "#f97316"], [0.5, "#374151"],
-            [0.6,  "#86efac"], [0.8, "#16a34a"],
-            [1.0,  "#14532d"],
+            [0.0,  "#1d4e89"], [0.2,  "#2e86c1"],
+            [0.4,  "#85c1e9"], [0.5,  "#f5f5f5"],
+            [0.6,  "#f0b27a"], [0.8,  "#e67e22"],
+            [1.0,  "#873600"],
         ],
         zmid=0,
     )
