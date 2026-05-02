@@ -296,23 +296,36 @@ if not animate:
 
 else:
     # ── Animated chart ────────────────────────────────────────────────────────
-    # Find max available weeks across all tickers
-    max_offset = min(
-        max(len(rd["rs_ratio"].dropna()) - tail_weeks - 2
-            for rd in rrg_data.values() if len(rd["rs_ratio"].dropna()) > tail_weeks + 2),
-        anim_weeks
-    )
+    # Find max available weeks — use minimum across all tickers to ensure all have data
+    valid_lengths = [
+        len(rd["rs_ratio"].dropna())
+        for rd in rrg_data.values()
+        if len(rd["rs_ratio"].dropna()) > tail_weeks + 2
+    ]
+    if not valid_lengths:
+        st.warning("Not enough history for animation. Try a shorter tail length.")
+        st.stop()
+
+    min_len    = min(valid_lengths)
+    max_offset = min(min_len - tail_weeks - 2, anim_weeks)
     max_offset = max(1, max_offset)
 
-    # Build all frames (from oldest to newest)
-    all_frames = []
+    # Get date index from first valid ticker
+    sample_rd  = next(
+        rd for rd in rrg_data.values()
+        if len(rd["rs_ratio"].dropna()) >= max_offset + tail_weeks + 2
+    )
+    date_idx = sample_rd["rs_ratio"].dropna().index
+
+    # Build all frames oldest → newest
+    all_frames   = []
     frame_labels = []
     for offset in range(max_offset, -1, -1):
         traces, shapes, annotations = build_frame(rrg_data, all_plot, tail_weeks, offset)
-        # Get date for this frame
-        sample_rd = next(iter(rrg_data.values()))
-        idx = sample_rd["rs_ratio"].dropna().index
-        frame_date = str(idx[-(offset+1)].date()) if offset < len(idx) else f"Week -{offset}"
+        if not traces:
+            continue
+        pos = -(offset + 1)
+        frame_date = str(date_idx[pos].date()) if abs(pos) <= len(date_idx) else f"Week -{offset}"
         all_frames.append(go.Frame(
             data=traces,
             name=frame_date,
@@ -326,6 +339,10 @@ else:
             )
         ))
         frame_labels.append(frame_date)
+
+    if not all_frames:
+        st.warning("Could not build animation frames. Try reducing tail length or animation history.")
+        st.stop()
 
     # Initial frame (oldest)
     init_traces, init_shapes, init_ann = build_frame(rrg_data, all_plot, tail_weeks, max_offset)
