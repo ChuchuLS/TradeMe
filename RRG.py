@@ -60,8 +60,9 @@ def compute_rrg(prices: pd.DataFrame, benchmark: str, period: int = 52) -> pd.Da
 
         # RS-Momentum = 1-period ROC of RS-Ratio, normalised similarly
         rs_mom_raw = rs_ratio.diff(1)
-        mom_min = rs_mom_raw.rolling(period, min_periods=period//2).min()
-        mom_max = rs_mom_raw.rolling(period, min_periods=period//2).max()
+        # Use smaller min_periods (10) so momentum is available early in the series
+        mom_min = rs_mom_raw.rolling(period, min_periods=10).min()
+        mom_max = rs_mom_raw.rolling(period, min_periods=10).max()
         rs_mom = 100 + ((rs_mom_raw - mom_min) / (mom_max - mom_min).replace(0, np.nan) - 0.5) * 20
 
         results[ticker] = {"rs_ratio": rs_ratio, "rs_mom": rs_mom}
@@ -220,7 +221,8 @@ def build_frame(rrg_data, all_plot, tail_w, week_offset=0):
         if len(tail_x) < 1:
             continue
         # Remove any NaN values
-        valid = [(x,y) for x,y in zip(tail_x,tail_y) if not (np.isnan(x) or np.isnan(y))]
+        valid = [(x,y) for x,y in zip(tail_x,tail_y)
+                 if not (pd.isna(x) or pd.isna(y))]
         if not valid:
             continue
         tail_x, tail_y = zip(*valid)
