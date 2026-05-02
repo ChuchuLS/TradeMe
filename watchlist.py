@@ -212,19 +212,21 @@ def score_row(ind, price):
     # Cap standard score at ±5
     score = max(-5, min(5, score))
 
-    # ── iFind signals (bonus, shown separately) ───────────────────────────────
+    # ── iFind signals — weighted at 2x standard indicators ──────────────────
+    # Each iFind signal = +2/-2 vs standard indicator +1/-1
+    # This gives iFind ~30-40% of total score weight
     ifind_tags = []
     if ind["ifind_buy"]:
-        score = min(5, score + 1)
+        score = min(5, score + 2)
         ifind_tags.append("🟢 买入")
     if ind["ifind_watch_buy"]:
-        score = min(5, score + 1)   # 关注低买 = early warning of buy, add +1
+        score = min(5, score + 1)   # early warning = half weight of confirmed buy
         ifind_tags.append("🔵 关注低买")
     if ind["ifind_sell"]:
-        score = max(-5, score - 1)
+        score = max(-5, score - 2)
         ifind_tags.append("🔴 卖出")
     if ind["ifind_watch_top"]:
-        score = max(-5, score - 1)
+        score = max(-5, score - 2)  # top warning = same weight as confirmed sell
         ifind_tags.append("⚠️ 观注顶")
 
     return score, signals, ifind_tags
